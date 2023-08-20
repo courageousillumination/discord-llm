@@ -1,7 +1,7 @@
 import "dotenv/config";
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, Message } from "discord.js";
 import { ChatOpenAI } from "langchain/chat_models/openai";
-import { HumanMessage } from "langchain/schema";
+import { AIMessage, HumanMessage } from "langchain/schema";
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const OPEN_AI_KEY = process.env.OPEN_AI_API_KEY;
@@ -19,18 +19,44 @@ const client = new Client({
   ],
 });
 
+const stripTriggers = (x: string) => x.replace("!llm", "");
+
+const getBotMessages = async (message: Message) => {
+  const content = message.content;
+  if (message.reference?.messageId) {
+    let original = await message.channel.messages.fetch(
+      message.reference?.messageId
+    );
+    if (original) {
+      return [
+        new AIMessage(stripTriggers(original.content)),
+        new HumanMessage(stripTriggers(content)),
+      ];
+    }
+  }
+  return [new HumanMessage(stripTriggers(content))];
+};
+
 client.on("ready", () => {
   console.log(`Logged in as ${client.user?.tag}!`);
 });
 
 client.on("messageCreate", async (message) => {
+  if (message.author.bot) {
+    // No bots talking to themselves.
+    return;
+  }
+
   const content = message.content;
   const channel = message.channel;
-  if (content.startsWith("!llm")) {
+
+  // Fire either on the !llm or a direct reply.
+  const isDirectReply = message.mentions?.repliedUser?.username === "llm-bot";
+  if (content.startsWith("!llm") || isDirectReply) {
     await channel.sendTyping();
-    const result = await chat.predictMessages([
-      new HumanMessage(content.slice(4)),
-    ]);
+
+    const messages = await getBotMessages(message);
+    const result = await chat.predictMessages(messages);
 
     if (result.content.length < 1500) {
       await message.reply(result.content);
